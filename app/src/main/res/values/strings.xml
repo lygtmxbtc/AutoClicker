@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">连点器</string>
+    <string name="service_label">连点器无障碍服务</string>
+    <string name="accessibility_description">开启后可在屏幕上显示悬浮按钮，按住即可在准星位置连续模拟点击。</string>
+    <string name="open_accessibility_settings">打开无障碍设置并启用</string>
+    <string name="usage_instructions">使用说明：
+
+1. 点击下方按钮，进入系统「无障碍」设置。
+2. 在列表中找到「连点器」，将其开启并允许。
+3. 返回后屏幕上会出现红色准星和控制面板。
+4. 拖动红色准星到你想连续点击的位置。
+5. 按住控制面板上的「按住连点」按钮，即会在准星处连续点击；松开即停止。
+6. 可用「＋ / －」调节点击间隔（毫秒）。
+7. 点击「关闭连点器」可停止服务并移除悬浮窗。</string>
+    <string name="enable_hint">提示：本应用通过 Android 无障碍服务模拟点击，需要你手动授权。请勿用于违反相关应用服务条款的用途。</string>
+</resources>
