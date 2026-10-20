@@ -1,6 +1,7 @@
 package com.example.autoclicker
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityService.GestureResultCallback
 import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
 import android.graphics.Canvas
@@ -21,7 +22,7 @@ import android.widget.TextView
 import kotlin.math.roundToInt
 
 /**
- * 无障碍服务：负责在屏幕上显示悬浮控件，并在用户“按住”触发按钮时，
+ * 无障碍服务：负责在屏幕上显示悬浮控件，并在用户开启连点后，
  * 通过 dispatchGesture 在目标准星位置连续模拟点击。
  */
 class AutoClickService : AccessibilityService() {
@@ -39,14 +40,12 @@ class AutoClickService : AccessibilityService() {
     private var isClicking = false
 
     private lateinit var intervalLabel: TextView
+    private var clickToggleButton: Button? = null
 
-    /** 连点循环：在目标位置点击一次，然后按间隔再次排队。 */
-    private val clickLoop = object : Runnable {
-        override fun run() {
+    /** 每次手势结束后再安排下一次点击，避免多个注入手势互相取消。 */
+    private val clickLoop = Runnable {
+        if (isClicking) {
             performClickAtTarget()
-            if (isClicking) {
-                handler.postDelayed(this, intervalMs)
-            }
         }
     }
 
@@ -58,7 +57,9 @@ class AutoClickService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
 
-    override fun onInterrupt() {}
+    override fun onInterrupt() {
+        stopClicking()
+    }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         stopClicking()
@@ -92,7 +93,7 @@ class AutoClickService : AccessibilityService() {
         targetView = crosshair
         targetParams = tParams
 
-        // 2. 控制面板：拖动手柄 + 间隔调节 + 按住连点按钮
+        // 2. 控制面板：拖动手柄 + 间隔调节 + 开始/停止按钮
         val panel = buildControlPanel()
         val pParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -156,26 +157,26 @@ class AutoClickService : AccessibilityService() {
         root.addView(intervalLabel)
         root.addView(intervalRow)
 
-        // 按住连点按钮
-        val holdButton = Button(this).apply {
-            text = "按住连点"
+        // 点击一次开始，再点击一次停止。使用 ACTION_DOWN 可在下一次注入手势前立即停止。
+        val toggleButton = Button(this).apply {
+            text = getString(R.string.start_clicking)
             setOnTouchListener { v, event ->
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         v.isPressed = true
-                        startClicking()
+                        if (isClicking) stopClicking() else startClicking()
                         true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         v.isPressed = false
-                        stopClicking()
                         true
                     }
-                    else -> false
+                    else -> true
                 }
             }
         }
-        root.addView(holdButton)
+        clickToggleButton = toggleButton
+        root.addView(toggleButton)
 
         // 关闭（停止服务并移除悬浮窗）
         val closeButton = Button(this).apply {
@@ -201,25 +202,62 @@ class AutoClickService : AccessibilityService() {
     private fun startClicking() {
         if (isClicking) return
         isClicking = true
+        clickToggleButton?.text = getString(R.string.stop_clicking)
+        setTargetTouchable(false)
         handler.post(clickLoop)
     }
 
     private fun stopClicking() {
         isClicking = false
         handler.removeCallbacks(clickLoop)
+        clickToggleButton?.text = getString(R.string.start_clicking)
+        setTargetTouchable(true)
+    }
+
+    private fun scheduleNextClick() {
+        if (isClicking) {
+            handler.postDelayed(clickLoop, intervalMs)
+        }
     }
 
     private fun performClickAtTarget() {
         val view = targetView ?: return
         val loc = IntArray(2)
         view.getLocationOnScreen(loc)
-        val x = (loc[0] + view.width / 2f)
-        val y = (loc[1] + view.height / 2f)
+        val x = loc[0] + view.width / 2f
+        val y = loc[1] + view.height / 2f
 
         val path = Path().apply { moveTo(x, y) }
         val stroke = GestureDescription.StrokeDescription(path, 0, 1)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        dispatchGesture(gesture, null, null)
+        val accepted = dispatchGesture(
+            gesture,
+            object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription) {
+                    scheduleNextClick()
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription) {
+                    scheduleNextClick()
+                }
+            },
+            handler
+        )
+        if (!accepted) {
+            scheduleNextClick()
+        }
+    }
+
+    /** 连点时让准星不可触摸，使模拟点击能够落到下层应用。 */
+    private fun setTargetTouchable(touchable: Boolean) {
+        val view = targetView ?: return
+        val params = targetParams ?: return
+        params.flags = if (touchable) {
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        } else {
+            params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        runCatching { windowManager.updateViewLayout(view, params) }
     }
 
     // ------------------------------------------------------------------
